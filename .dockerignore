@@ -1,0 +1,9 @@
+config.json
+pending.json
+session_name.session
+downloads/
+data/
+__pycache__/
+*.pyc
+.git
+.gitignore

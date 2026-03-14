@@ -1,0 +1,308 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Telegram 视频下载 - 状态面板</title>
+  <style>
+    :root {
+      --bg: #0f0f12;
+      --card: #1a1a1f;
+      --border: #2a2a32;
+      --text: #e4e4e7;
+      --muted: #71717a;
+      --accent: #3b82f6;
+      --success: #22c55e;
+      --error: #ef4444;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: "SF Pro Display", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+      padding: 1.5rem;
+    }
+    h1 { font-size: 1.5rem; font-weight: 600; margin-bottom: 1.5rem; color: var(--text); }
+    .card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 1.25rem;
+      margin-bottom: 1rem;
+    }
+    .card h2 {
+      font-size: 0.875rem;
+      font-weight: 500;
+      color: var(--muted);
+      margin-bottom: 0.75rem;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+    .status-row { display: flex; align-items: center; gap: 1rem; margin-bottom: 0.5rem; }
+    .status-row:last-child { margin-bottom: 0; }
+    .label { color: var(--muted); font-size: 0.9rem; min-width: 80px; }
+    .value { font-weight: 500; }
+    .progress-wrap {
+      width: 100%;
+      height: 8px;
+      background: var(--border);
+      border-radius: 4px;
+      overflow: hidden;
+      margin-top: 0.5rem;
+    }
+    .progress-bar {
+      height: 100%;
+      background: linear-gradient(90deg, var(--accent), #60a5fa);
+      border-radius: 4px;
+      transition: width 0.3s ease;
+    }
+    .idle { color: var(--muted); }
+    .downloading { color: var(--accent); }
+    .active-item {
+      padding: 0.5rem 0;
+      border-bottom: 1px solid var(--border);
+    }
+    .active-item:last-child { border-bottom: none; }
+    .active-item .sender { font-weight: 500; margin-bottom: 0.25rem; }
+    .active-item .progress-text { font-size: 0.85rem; color: var(--muted); }
+    table { width: 100%; border-collapse: collapse; font-size: 0.9rem; }
+    th, td { padding: 0.6rem 0.75rem; text-align: left; border-bottom: 1px solid var(--border); }
+    th {
+      color: var(--muted);
+      font-weight: 500;
+      font-size: 0.75rem;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+    tr:last-child td { border-bottom: none; }
+    .badge {
+      display: inline-block;
+      padding: 0.2rem 0.5rem;
+      border-radius: 4px;
+      font-size: 0.75rem;
+      font-weight: 500;
+    }
+    .badge-waiting { background: rgba(113, 113, 122, 0.3); color: var(--muted); }
+    .badge-downloading { background: rgba(59, 130, 246, 0.2); color: var(--accent); }
+    .badge-success { background: rgba(34, 197, 94, 0.2); color: var(--success); }
+    .badge-error { background: rgba(239, 68, 68, 0.2); color: var(--error); }
+    .file-path { font-family: monospace; font-size: 0.8rem; color: var(--muted); word-break: break-all; }
+    .error-msg { color: var(--error); font-size: 0.85rem; }
+    .updated { font-size: 0.75rem; color: var(--muted); margin-top: 0.75rem; }
+    .empty-hint { color: var(--muted); font-size: 0.9rem; }
+  </style>
+</head>
+<body>
+  <h1>Telegram 视频下载</h1>
+
+  <div class="card">
+    <h2>正在下载</h2>
+    <div class="status-row">
+      <span class="label">队列等待</span>
+      <span class="value" id="queue-size">0</span> 个 · 并发数 <span id="concurrent-n">-</span>
+    </div>
+    <div id="active-list">
+      <div class="empty-hint">暂无正在下载的任务</div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>未下载列表</h2>
+    <table>
+      <thead>
+        <tr>
+          <th>状态</th>
+          <th>文件名</th>
+          <th>发送者</th>
+          <th>加入时间</th>
+        </tr>
+      </thead>
+      <tbody id="pending-body">
+        <tr><td colspan="4" class="empty-hint">暂无</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="card">
+    <h2>下载记录（最近）</h2>
+    <table>
+      <thead>
+        <tr>
+          <th>状态</th>
+          <th>发送者</th>
+          <th>文件/错误</th>
+          <th>完成时间</th>
+          <th>所用时长</th>
+        </tr>
+      </thead>
+      <tbody id="history-body">
+        <tr><td colspan="5" class="empty-hint">暂无记录</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="card">
+    <h2>下载成功记录（数据库）</h2>
+    <table>
+      <thead>
+        <tr>
+          <th>文件名</th>
+          <th>大小</th>
+          <th>用户名</th>
+          <th>消息时间</th>
+          <th>下载完成时间</th>
+          <th>所用时长</th>
+        </tr>
+      </thead>
+      <tbody id="download-records-body">
+        <tr><td colspan="6" class="empty-hint">暂无</td></tr>
+      </tbody>
+    </table>
+    <div class="updated" id="updated">最后更新: -</div>
+  </div>
+
+  <script>
+    async function fetchStatus() {
+      try {
+        const r = await fetch('/api/status');
+        return await r.json();
+      } catch (e) {
+        console.error(e);
+        return null;
+      }
+    }
+
+    function escapeHtml(s) {
+      const div = document.createElement('div');
+      div.textContent = s;
+      return div.innerHTML;
+    }
+
+    function render(data) {
+      if (!data) return;
+
+      const queueSize = data.queue_size || 0;
+      const concurrent = data.concurrent_downloads || 1;
+      const active = data.active_downloads || [];
+      const pending = data.pending_list || [];
+      const history = data.history || [];
+
+      document.getElementById('queue-size').textContent = queueSize;
+      document.getElementById('concurrent-n').textContent = concurrent;
+
+      function formatDuration(sec) {
+        if (sec == null || sec === '') return '-';
+        const s = Number(sec);
+        if (s < 60) return s + ' 秒';
+        const m = Math.floor(s / 60);
+        const r = Math.floor(s % 60);
+        return r > 0 ? m + ' 分 ' + r + ' 秒' : m + ' 分';
+      }
+      function formatSpeed(bps) {
+        if (bps == null || bps === '' || bps <= 0) return '-';
+        const n = Number(bps);
+        if (n >= 1 << 20) return (n / (1 << 20)).toFixed(2) + ' MB/s';
+        if (n >= 1 << 10) return (n / (1 << 10)).toFixed(2) + ' KB/s';
+        return n.toFixed(0) + ' B/s';
+      }
+
+      const activeEl = document.getElementById('active-list');
+      if (active.length === 0) {
+        activeEl.innerHTML = '<div class="empty-hint">暂无正在下载的任务</div>';
+      } else {
+        activeEl.innerHTML = active.map(a => {
+          const pct = a.progress_pct ?? 0;
+          const mb = (a.total_mb > 0)
+            ? ` (${a.current_mb} / ${a.total_mb} MB)`
+            : '';
+          const elapsed = formatDuration(a.elapsed_sec);
+          const speed = formatSpeed(a.speed_bytes_per_sec);
+          const fn = (a.file_name || '').trim() || '-';
+          return `<div class="active-item">
+            <div class="sender">${escapeHtml(fn)}</div>
+            <div class="progress-text">发送者: ${escapeHtml(a.sender || '-')} · ${pct}%${mb} · 已用 ${elapsed} · ${speed}</div>
+            <div class="progress-wrap"><div class="progress-bar" style="width:${pct}%"></div></div>
+          </div>`;
+        }).join('');
+      }
+
+      const pendingBody = document.getElementById('pending-body');
+      if (pending.length === 0) {
+        pendingBody.innerHTML = '<tr><td colspan="4" class="empty-hint">暂无</td></tr>';
+      } else {
+        pendingBody.innerHTML = pending.map(p => {
+          const statusClass = p.status === 'downloading' ? 'badge-downloading' : 'badge-waiting';
+          const statusText = p.status === 'downloading' ? '下载中' : '等待中';
+          const fn = (p.file_name || '').trim() || '-';
+          return `<tr>
+            <td><span class="badge ${statusClass}">${statusText}</span></td>
+            <td class="file-path">${escapeHtml(fn)}</td>
+            <td>${escapeHtml(p.sender_name || '-')}</td>
+            <td>${p.added_at || '-'}</td>
+          </tr>`;
+        }).join('');
+      }
+
+      const historyBody = document.getElementById('history-body');
+      if (history.length === 0) {
+        historyBody.innerHTML = '<tr><td colspan="5" class="empty-hint">暂无记录</td></tr>';
+      } else {
+        historyBody.innerHTML = history.map(h => {
+          const badge = h.status === 'success'
+            ? '<span class="badge badge-success">成功</span>'
+            : '<span class="badge badge-error">失败</span>';
+          const detail = h.status === 'success'
+            ? `<span class="file-path">${escapeHtml(h.file_path || '-')}</span>`
+            : `<span class="error-msg">${escapeHtml(h.error || '-')}</span>`;
+          const duration = h.status === 'success' && h.duration_sec != null ? formatDuration(h.duration_sec) : '-';
+          return `<tr>
+            <td>${badge}</td>
+            <td>${escapeHtml(h.sender || '-')}</td>
+            <td>${detail}</td>
+            <td>${h.time || '-'}</td>
+            <td>${duration}</td>
+          </tr>`;
+        }).join('');
+      }
+
+      function formatSize(bytes) {
+        if (bytes == null || bytes === '') return '-';
+        const n = Number(bytes);
+        if (n >= 1 << 30) return (n / (1 << 30)).toFixed(2) + ' GB';
+        if (n >= 1 << 20) return (n / (1 << 20)).toFixed(2) + ' MB';
+        if (n >= 1 << 10) return (n / (1 << 10)).toFixed(2) + ' KB';
+        return n + ' B';
+      }
+      const records = data.download_records || [];
+      const recordsBody = document.getElementById('download-records-body');
+      if (records.length === 0) {
+        recordsBody.innerHTML = '<tr><td colspan="6" class="empty-hint">暂无</td></tr>';
+      } else {
+        recordsBody.innerHTML = records.map(r => {
+          const duration = r.duration_sec != null ? formatDuration(r.duration_sec) : '-';
+          return `<tr>
+            <td class="file-path">${escapeHtml(r.file_name || '-')}</td>
+            <td>${formatSize(r.file_size)}</td>
+            <td>${escapeHtml(r.username || '-')}</td>
+            <td>${r.message_time || '-'}</td>
+            <td>${r.download_time || '-'}</td>
+            <td>${duration}</td>
+          </tr>`;
+        }).join('');
+      }
+
+      document.getElementById('updated').textContent = '最后更新: ' + new Date().toLocaleTimeString('zh-CN');
+    }
+
+    (async function tick() {
+      const data = await fetchStatus();
+      render(data);
+    })();
+    setInterval(async () => {
+      const data = await fetchStatus();
+      render(data);
+    }, 2000);
+  </script>
+</body>
+</html>

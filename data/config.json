@@ -1,0 +1,16 @@
+{
+  "api_id": 368,
+  "api_hash": "e1ffa7e97fa5d1545eb2d",
+  "download_path": "./downloads",
+  "web_port": 8765,
+  "target_group_name": "down",
+  "concurrent_downloads": 3,
+  "push_status_to_group": true,
+  "openai_api_key": "fk210f5ny2N8hPKX1XewKnw",
+  "openai_base_url": "http.net",
+  "tg_proxy_type": "http",
+  "tg_proxy_host": "192.168.9.200",
+  "tg_proxy_port": 7893,
+  "tg_proxy_username": "",
+  "tg_proxy_password": ""
+}
