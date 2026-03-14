@@ -131,7 +131,6 @@ python app.py
 
 ## Docker 部署
 
-### 方式一：使用项目自带 Dockerfile
 
 ```bash
 cd tgdown
@@ -142,10 +141,10 @@ docker build -t tgdown:latest .
 # 运行（挂载 data 目录，端口 8765）
 docker run -d \
   --name tgdown \
-  -p 8765:8765 \
+  --network host \
   -v "$(pwd)/data:/data" \
-  --restart=unless-stopped \
-  tgdown:latest
+  --restart=always \
+  xxgl/tgdown:1.0
 ```
 
 **注意**：
@@ -153,45 +152,10 @@ docker run -d \
 - 部署前务必在宿主机准备好 `data/config.json`（及已登录的 `data/session*` 若需沿用）
 - 下载目录：若 `download_path` 为相对路径，会落在容器内；若需宿主机目录，可在 `config.json` 中写绝对路径并再挂载该卷
 
-### 方式二：使用 deploy 脚本
 
-项目自带 `deploy.sh`，支持一键构建并运行 Docker（默认端口 8765、挂载 `data`）：
 
-```bash
-chmod +x deploy.sh
-./deploy.sh
-```
 
-在菜单中选择 **0** 即可完成构建并启动容器。其他选项可重启、停止、查看日志等。
 
----
-
-## 目录结构说明
-
-```
-tgdown/
-├── app.py           # 主程序（Telethon 监听 + FastAPI Web）
-├── ai.py            # 可选：OpenAI 兼容 API 调用，用于生成文件名
-├── index.html       # Web 状态页
-├── requirements.txt
-├── Dockerfile
-├── deploy.sh        # 部署脚本（Docker/后台进程）
-├── data/            # 配置与数据（需自行创建并放入 config.json）
-│   ├── config.json  # 必选
-│   ├── session*     # 首次登录后生成，勿删
-│   └── downloads.db # 下载成功记录数据库
-└── downloads/       # 默认下载目录（可由 config 修改）
-```
-
----
-
-## API 说明
-
-- `GET /` — 返回 Web 状态页（index.html）
-- `GET /api/status` — 实时状态（队列、正在下载、待下载、最近记录）
-- `GET /api/download-records?page=1&per_page=20` — 分页查询下载成功记录，返回 `{ "items": [], "total": N, "page": 1, "per_page": 20 }`
-
----
 
 ## 许可证
 
