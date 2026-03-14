@@ -11,7 +11,7 @@
 - **状态推送**：下载开始/完成/失败时可推送到该群（可关闭）
 - **Web 面板**：实时查看正在下载、未下载列表、最近记录；数据库记录支持分页
 - **持久化**：下载成功记录写入 SQLite，支持分页查询
-- **可选代理**：支持 SOCKS5/SOCKS4/HTTP 代理（需安装 PySocks）
+- **可选代理**：支持 SOCKS5/SOCKS4/HTTP 代理
 - **可选 AI 命名**：配置 OpenAI 兼容 API 后，可根据消息文案或原文件名生成更友好的本地文件名
 
 ---
@@ -49,8 +49,6 @@
 
 ### 代理（可选）
 
-需要代理时安装：`pip install pysocks`，并在配置中增加：
-
 ```json
 "tg_proxy_type": "socks5",
 "tg_proxy_host": "127.0.0.1",
@@ -67,7 +65,6 @@
 "openai_api_key": "your-api-key",
 "openai_base_url": "https://api.openai.com/v1"
 ```
-
 未配置时不影响下载，仅使用时间戳等规则命名。
 
 ### 配置示例
@@ -89,53 +86,13 @@
 
 ---
 
-## 使用与部署
-
-### 1. 克隆与依赖
-
-```bash
-cd /path/to/your/workdir
-git clone <仓库地址> tgdown
-cd tgdown
-pip install -r requirements.txt
-```
-
-### 2. 准备配置与目录
-
-- 在项目下创建 `data` 目录，放入 `config.json`（或先在项目根目录放 `config.json`，首次运行时会复制到 `data/`）
-- 确保 `config.json` 中包含正确的 `api_id` 和 `api_hash`
-
-```bash
-mkdir -p data
-# 将 config.json 放入 data/ 并编辑
-```
-
-### 3. 首次运行与登录
-
-```bash
-python app.py
-```
-
-首次运行会要求输入手机号、验证码等完成 Telegram 登录，会话会保存在 `data/session`，之后无需重复登录。
-
-### 4. 访问 Web 面板
-
-浏览器打开：`http://<服务器IP>:8765`（默认端口 8765）。
-
-可查看：
-
-- 正在下载、未下载列表、最近下载记录
-- 下载成功记录（数据库）— 支持分页
-
----
+## 部署
 
 ## Docker 部署
 
-
-
 ```bash
 cd tgdown
-# 运行（挂载 data 目录，端口 8765）
+# 第一次使用需要初始化session信息
 docker run --rm -it \
   --name tgdown \
   --network host \
@@ -143,11 +100,9 @@ docker run --rm -it \
   xxgl/tgdown:1.0
 ```
 
-
-
 ```bash
 cd tgdown
-# 运行（挂载 data 目录，端口 8765）
+# 运行（挂载 data 和 downloads 目录，端口 8765）
 docker run -d \
   --name tgdown \
   --network host \
@@ -155,24 +110,10 @@ docker run -d \
   -v "$(pwd)/downloads:/downloads" \
   --restart=always \
   xxgl/tgdown:1.0
-  
-  
-  
 ```
-
-**注意**：
-
-- 部署前务必在宿主机准备好 `data/config.json`（及已登录的 `data/session*` 若需沿用）
-- 下载目录：若 `download_path` 为相对路径，会落在容器内；若需宿主机目录，可在 `config.json` 中写绝对路径并再挂载该卷
-
-
-
 下载文件名称的两种格式
-1、根据文案ai生成：文件名+时间
-2、空文案：时间+视频文件名
-
-
-
+- 1、根据文案ai生成：文件名+时间
+- 2、空文案：时间+视频文件名
 
 ## 许可证
 
