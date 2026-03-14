@@ -134,15 +134,12 @@ python app.py
 
 ```bash
 cd tgdown
-
-# 构建镜像
-docker build -t tgdown:latest .
-
 # 运行（挂载 data 目录，端口 8765）
 docker run -d \
   --name tgdown \
   --network host \
   -v "$(pwd)/data:/data" \
+  -v "$(pwd)/data/downloads:/data/downloads" \
   --restart=always \
   xxgl/tgdown:1.0
 ```
