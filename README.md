@@ -152,7 +152,7 @@ docker run -d \
   --name tgdown \
   --network host \
   -v "$(pwd)/data:/data" \
-  -v "$(pwd)/data/downloads:/downloads" \
+  -v "$(pwd)/downloads:/downloads" \
   --restart=always \
   xxgl/tgdown:1.0
   
