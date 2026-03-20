@@ -1,4 +1,8 @@
 from telethon import TelegramClient, events
+try:
+    from croniter import croniter  # type: ignore
+except Exception:  # pragma: no cover
+    croniter = None  # type: ignore
 import os
 import asyncio
 import threading
@@ -80,6 +84,21 @@ PUSH_STATUS_TO_GROUP = _config.get("push_status_to_group", True)
 DOWNLOAD_RETRIES = max(0, int(_config.get("download_retries", 2)))  # 下载失败或卡住时重试次数，默认 2
 # 若连续多少秒没有新的下载进度则判定为卡住并重试；0 表示不检测（大文件友好）
 DOWNLOAD_STALL_SECONDS = max(0, int(_config.get("download_stall_seconds", 600)))
+
+# ---------- 定时发送（cron） ----------
+# 支持 5 字段或 6 字段 cron：
+# - 5 字段：分钟 小时 日 月 星期（例如：*/5 * * * *）
+# - 6 字段：秒 分钟 小时 日 月 星期（例如：*/10 * * * * *）
+CRON_SEND_CURRENT_TIME_CRON = str(_config.get("cron_send_current_time_cron", "")).strip()
+CRON_SEND_CURRENT_TIME_ENABLED = bool(CRON_SEND_CURRENT_TIME_CRON)
+
+# 为了让配置文件尽量“只放 cron 表达式”，时间格式与文案在代码里使用默认值。
+CRON_SEND_CURRENT_TIME_TIME_FORMAT = "%Y-%m-%d %H:%M:%S"
+CRON_SEND_CURRENT_TIME_MESSAGE_TEMPLATE = "当前时间：{time}"
+
+if CRON_SEND_CURRENT_TIME_ENABLED and croniter is None:
+    log.error("已配置 cron_send_current_time_cron，但缺少 croniter 依赖，请运行: pip install croniter")
+    CRON_SEND_CURRENT_TIME_ENABLED = False
 
 
 def _build_tg_proxy_from_config():
@@ -808,6 +827,67 @@ def run_web():
     uvicorn.run(app, host=WEB_BIND, port=WEB_PORT, log_level="warning")
 
 
+async def _cron_send_current_time_once(send_dt: datetime):
+    """向目标群发送一次“当前时间”。"""
+    if not CRON_SEND_CURRENT_TIME_ENABLED:
+        return
+    try:
+        if _target_chat_id is None:
+            await _ensure_target_chat()
+        if _target_chat_id is None:
+            log.warning("cron 发送失败：未能解析到目标群 chat_id（%s）", TARGET_GROUP_NAME)
+            return
+
+        time_str = send_dt.strftime(CRON_SEND_CURRENT_TIME_TIME_FORMAT)
+        text = CRON_SEND_CURRENT_TIME_MESSAGE_TEMPLATE.format(time=time_str)
+        await client.send_message(_target_chat_id, text)
+    except Exception as e:
+        log.warning("cron 发送当前时间到群失败: %s", e)
+
+
+async def _cron_send_current_time_loop():
+    """根据 cron 表达式定时发送当前时间。"""
+    if not CRON_SEND_CURRENT_TIME_ENABLED:
+        return
+    if croniter is None:  # 理论上不会发生（上面已禁用）
+        log.error("croniter 依赖缺失，cron 任务已禁用")
+        return
+    expr = CRON_SEND_CURRENT_TIME_CRON
+    fields = expr.split()
+    if len(fields) not in (5, 6):
+        log.error("cron 表达式字段数不合法: %r（支持 5 字段或 6 字段）", expr)
+        return
+
+    second_at_beginning = len(fields) == 6
+    try:
+        ci = croniter(
+            expr,
+            datetime.now(),
+            ret_type=datetime,
+            second_at_beginning=second_at_beginning,
+        )
+        next_dt = ci.get_next(datetime)
+    except Exception as e:
+        log.error("cron 表达式解析失败: %r，错误: %s", expr, e)
+        return
+
+    while True:
+        now = datetime.now()
+        delay = (next_dt - now).total_seconds()
+        if delay > 0:
+            await asyncio.sleep(delay)
+        else:
+            # 如果系统时间变动导致已过期，直接立即发送一次
+            await asyncio.sleep(0)
+
+        await _cron_send_current_time_once(next_dt)
+        try:
+            next_dt = ci.get_next(datetime)
+        except Exception as e:
+            log.error("cron 计算下一次触发时间失败: %s", e)
+            return
+
+
 if __name__ == "__main__":
     _init_db()
 
@@ -826,6 +906,8 @@ if __name__ == "__main__":
         _download_queue = asyncio.Queue()
         for _ in range(CONCURRENT_DOWNLOADS):
             asyncio.create_task(_download_worker())
+        if CRON_SEND_CURRENT_TIME_ENABLED:
+            asyncio.create_task(_cron_send_current_time_loop())
 
     with client:
         client.loop.run_until_complete(_start())

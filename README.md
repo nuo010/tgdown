@@ -46,6 +46,7 @@
 | `push_status_to_group` | `true` | 是否把下载状态推送到目标群 |
 | `download_retries` | `2` | 下载失败或卡住时的重试次数 |
 | `download_stall_seconds` | `600` | 多少秒无进度视为卡住并重试；`0` 表示不检测 |
+| `cron_send_current_time_cron` | `""` | cron 表达式：支持 5 字段（分钟 小时 日 月 星期）或 6 字段（秒 分钟 小时 日 月 星期） |
 
 ### 代理（可选）
 
@@ -78,6 +79,7 @@
   "target_group_name": "down",
   "concurrent_downloads": 3,
   "push_status_to_group": true,
+  "cron_send_current_time_cron": "*/5 * * * *",
   "openai_api_key": "",
   "openai_base_url": "",
   "tg_proxy_type": "",
