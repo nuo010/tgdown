@@ -27,27 +27,29 @@
 
 所有配置存放在 **`data/config.json`**（本地运行时为项目下的 `data` 目录；Docker 运行时为挂载的 `/data`）。
 
-### 必填项
+### 字段说明
 
-| 配置项     | 说明 |
-|------------|------|
-| `api_id`   | Telegram 应用 api_id（整数） |
-| `api_hash` | Telegram 应用 api_hash（字符串） |
-
-### 常用可选项
-
-| 配置项 | 默认值 | 说明 |
-|--------|--------|------|
-| `target_group_name` | `"downapp"` | 监听的群组名称（需与群标题完全一致） |
-| `download_path` | `"./downloads"` | 下载保存目录（相对路径基于 data 的父目录） |
-| `web_port` | `8765` | Web 面板端口 |
-| `web_bind` | `"0.0.0.0"` | 绑定地址，仅本机访问可填 `127.0.0.1` |
-| `concurrent_downloads` | `3` | 并发下载数 |
-| `push_status_to_group` | `true` | 是否把下载状态推送到目标群 |
-| `download_retries` | `2` | 下载失败或卡住时的重试次数 |
-| `download_stall_seconds` | `600` | 多少秒无进度视为卡住并重试；`0` 表示不检测 |
-| `cron_send_current_time_cron` | `""` | cron 表达式：支持 5 字段（分钟 小时 日 月 星期）或 6 字段（秒 分钟 小时 日 月 星期） |
-| `cron_push_download_progress_cron` | `""` | 定时推送下载进度；仅当存在下载中的任务时才会发到目标群 |
+| 配置项 | 是否必填 | 默认值 | 说明 |
+|--------|----------|--------|------|
+| `api_id` | 是 | 无 | Telegram 应用 `api_id` |
+| `api_hash` | 是 | 无 | Telegram 应用 `api_hash` |
+| `target_group_name` | 否 | `"downapp"` | 监听的目标群名称，需与群标题一致 |
+| `download_path` | 否 | `"./downloads"` | 下载保存目录，相对路径基于 `data` 的父目录 |
+| `web_port` | 否 | `8765` | Web 面板端口 |
+| `web_bind` | 否 | `"0.0.0.0"` | Web 绑定地址，仅本机访问可填 `127.0.0.1` |
+| `concurrent_downloads` | 否 | `3` | 并发下载数 |
+| `push_status_to_group` | 否 | `true` | 是否把状态消息推送到目标群 |
+| `download_retries` | 否 | `2` | 下载失败或卡住时的重试次数 |
+| `download_stall_seconds` | 否 | `600` | 连续多少秒无进度视为卡住并重试，`0` 表示关闭 |
+| `cron_send_current_time_cron` | 否 | `""` | 定时发送当前时间的 cron 表达式，支持 5 或 6 字段 |
+| `cron_push_download_progress_cron` | 否 | `""` | 定时推送下载进度的 cron 表达式，仅在有任务下载时推送 |
+| `openai_api_key` | 否 | `""` | OpenAI 兼容接口的 API Key，用于 AI 命名 |
+| `openai_base_url` | 否 | `""` | OpenAI 兼容接口地址，例如 `https://api.openai.com/v1` |
+| `tg_proxy_type` | 否 | `""` | Telegram 代理类型，可选 `socks5`、`socks4`、`http` |
+| `tg_proxy_host` | 否 | `""` | Telegram 代理地址 |
+| `tg_proxy_port` | 否 | `0` | Telegram 代理端口 |
+| `tg_proxy_username` | 否 | `""` | Telegram 代理用户名，没有可留空 |
+| `tg_proxy_password` | 否 | `""` | Telegram 代理密码，没有可留空 |
 
 ### 配置示例
 
@@ -57,9 +59,12 @@
   "api_hash": "e1ffa7e97d1545eb2d",
   "download_path": "./downloads",
   "web_port": 8765,
+  "web_bind": "0.0.0.0",
   "target_group_name": "down",
   "concurrent_downloads": 3,
   "push_status_to_group": true,
+  "download_retries": 2,
+  "download_stall_seconds": 600,
   "cron_send_current_time_cron": "*/5 * * * *",
   "cron_push_download_progress_cron": "*/1 * * * *",
   "openai_api_key": "",
