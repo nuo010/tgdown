@@ -87,6 +87,7 @@
 ```bash
 cd tgdown
 # 第一次使用需要初始化session信息，运行脚本后，输入手机号然后发送验证码，用验证码登录成功后获取到session就可以了
+# 第一次使用先手动在挂载目录下创建配置文件 config.json 然后运行容器
 docker run --rm -it \
   --name tgdown \
   --network host \
