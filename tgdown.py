@@ -291,6 +291,16 @@ def _is_in_pending(chat_id: int, message_id: int) -> bool:
         return any(p["chat_id"] == chat_id and p["message_id"] == message_id for p in _pending_list)
 
 
+def _is_in_active(chat_id: int, message_id: int) -> bool:
+    download_id = _download_id(chat_id, message_id)
+    with _state_lock:
+        return download_id in _active_downloads
+
+
+def _is_already_queued(chat_id: int, message_id: int) -> bool:
+    return _is_in_pending(chat_id, message_id) or _is_in_active(chat_id, message_id)
+
+
 async def _push_status(text: str):
     """把状态消息发到 downapp 群"""
     if not PUSH_STATUS_TO_GROUP or _target_chat_id is None:
@@ -435,6 +445,9 @@ async def _handle_links_in_text(text: str):
                 f"⚠️ 链接对应的消息不是视频或已失效：{chat_ref} #{msg_id}"
             )
             continue
+        if _is_already_queued(entity.id, msg_id):
+            log.info("链接对应消息已在队列或下载中，跳过重复: %s #%s", chat_ref, msg_id)
+            continue
         sender = await message.get_sender()
         sender_name = getattr(sender, "username", None) or getattr(sender, "first_name", "未知")
         await _enqueue(entity.id, msg_id, sender_name)
@@ -496,6 +509,80 @@ def _sanitize_basename(name: str) -> str:
         s = s.replace("__", "_")
     s = s.strip("._")
     return s or "video"
+
+
+def _normalize_media_ext(ext: str) -> str:
+    ext = unicodedata.normalize("NFKC", str(ext or "")).strip().lower()
+    if not ext:
+        return ".mp4"
+    if not ext.startswith("."):
+        ext = "." + ext
+    return ext
+
+
+def _strip_duplicate_suffix(name: str) -> str:
+    s = unicodedata.normalize("NFKC", str(name or "")).strip()
+    if len(s) >= 3 and s.endswith(")") and "(" in s:
+        left = s.rfind("(")
+        inner = s[left + 1:-1].strip()
+        if left > 0 and inner.isdigit():
+            s = s[:left].rstrip()
+    return s
+
+
+def _resolve_conflict_path(path: str) -> str:
+    p = Path(path)
+    if not p.exists():
+        return str(p)
+    stem = p.stem
+    suffix = p.suffix
+    parent = p.parent
+    index = 2
+    while True:
+        candidate = parent / f"{stem}_{index}{suffix}"
+        if not candidate.exists():
+            return str(candidate)
+        index += 1
+
+
+def _cleanup_temp_file(path: str | None, download_id: str):
+    if not path:
+        return
+    try:
+        p = Path(path)
+        if not p.exists():
+            return
+        if p.name.startswith(f"{download_id}_temp"):
+            p.unlink()
+    except Exception as e:
+        log.warning("清理临时文件失败: %s (%s)", path, e)
+
+
+async def _build_final_basename(message, original_base: str, ts_str: str, ext: str) -> str:
+    cleaned_base = _sanitize_basename(_strip_duplicate_suffix(original_base or "video"))
+    msg_text = (getattr(message, "text", None) or getattr(message, "message", None) or "").strip()
+
+    if msg_text and generate_video_filename_from_text:
+        try:
+            log.info("根据消息文本生成文件名，文本长度: %d", len(msg_text))
+            name_from_ai = await asyncio.to_thread(generate_video_filename_from_text, msg_text)
+            name_from_ai = _sanitize_basename(name_from_ai)
+            if name_from_ai and name_from_ai != "video":
+                return f"{name_from_ai}_{ts_str}_ai{ext}"
+        except Exception as e:
+            log.warning("根据文案生成文件名失败，将使用原文件名规则: %s", e)
+
+    if _has_chinese(cleaned_base) and generate_video_filename_from_text:
+        try:
+            log.info("根据原文件名中文生成文件名，原名: %s", cleaned_base)
+            name_from_ai2 = await asyncio.to_thread(generate_video_filename_from_text, cleaned_base)
+            name_from_ai2 = _sanitize_basename(name_from_ai2)
+            if name_from_ai2 and name_from_ai2 != "video":
+                return f"{ts_str}_{name_from_ai2}_ai{ext}"
+        except Exception as e:
+            log.warning("根据原文件名生成文件名失败，使用清洗后的原名: %s", e)
+
+    return f"{ts_str}_{cleaned_base}{ext}"
 
 
 def _has_chinese(s: str) -> bool:
@@ -579,7 +666,6 @@ async def _download_worker():
                 _remove_active(download_id)
                 await _push_status(f"⚠️ 跳过：{sender_name} 的消息（非视频或已失效）")
                 log.info("跳过非视频或已失效消息: chat_id=%s msg_id=%s", chat_id, message_id)
-                _download_queue.task_done()
                 continue
 
             file_name = _get_media_file_name(message)
@@ -588,6 +674,7 @@ async def _download_worker():
 
             last_error = None
             for attempt in range(DOWNLOAD_RETRIES + 1):
+                temp_path = None
                 try:
                     _update_active(download_id, last_progress_time=time.time())
                     download_coro = message.download_media(
@@ -626,58 +713,17 @@ async def _download_worker():
                     file_path = str(Path(file_path).resolve())
                     dirname, basename = os.path.split(file_path)
                     name_no_ext, ext = os.path.splitext(basename)
-                    if not ext:
-                        ext = ".mp4"
+                    ext = _normalize_media_ext(ext)
                     # 立即重命名为临时安全名，避免保留 Telegram/发送者文件名中的标点等
                     safe_temp_basename = f"{download_id}_temp{ext}"
-                    temp_path = os.path.join(dirname, safe_temp_basename)
+                    temp_path = _resolve_conflict_path(os.path.join(dirname, safe_temp_basename))
                     if file_path != temp_path:
                         shutil.move(file_path, temp_path)
                         file_path = temp_path
                     now = datetime.now()
                     ts_str = now.strftime("%Y_%m_%d_%H_%M_%S")
-                    # 有文案：用 AI 生成关键词文件名，拼接在前，时间戳在后
-                    # 例如: 川普_史诗狂怒_行动_持续_4至5周_2026_03_01_15_15_15.mp4
-                    msg_text = (getattr(message, "text", None) or getattr(message, "message", None) or "").strip()
-                    new_basename = None
-                    if msg_text and generate_video_filename_from_text:
-                        try:
-                            log.info("根据消息文本生成文件名，文本长度: %d", len(msg_text))
-                            name_from_ai = await asyncio.to_thread(
-                                generate_video_filename_from_text, msg_text
-                            )
-                            name_from_ai = _sanitize_basename(name_from_ai)
-                            new_basename = f"{name_from_ai}_{ts_str}{ext}"
-                        except Exception as e:
-                            log.warning("根据文案生成文件名失败，将使用无文案规则: %s", e)
-
-                    # 无文案或上一步失败：根据原文件名是否包含中文来命名
-                    # 1) 原文件名含中文：用 AI 整理中文，再拼接到时间戳后
-                    #    例如: 2026_03_01_15_15_15_整理后中文名.mp4
-                    # 2) 原文件名不含中文：直接用 “空”
-                    #    例如: 2026_03_01_15_15_15_空.mp4
-                    if new_basename is None:
-                        base = name_no_ext or "video"
-                        if _has_chinese(base):
-                            if generate_video_filename_from_text:
-                                try:
-                                    log.info("根据原文件名中文生成文件名，原名: %s", base)
-                                    name_from_ai2 = await asyncio.to_thread(
-                                        generate_video_filename_from_text, base
-                                    )
-                                    name_from_ai2 = _sanitize_basename(name_from_ai2)
-                                    new_basename = f"{ts_str}_{name_from_ai2}{ext}"
-                                except Exception as e:
-                                    log.warning("根据原文件名生成文件名失败，使用清洗后的原名: %s", e)
-                                    safe = _sanitize_basename(base)
-                                    new_basename = f"{ts_str}_{safe}{ext}"
-                            else:
-                                safe = _sanitize_basename(base)
-                                new_basename = f"{ts_str}_{safe}{ext}"
-                        else:
-                            new_basename = f"{ts_str}_空{ext}"
-
-                    new_path = os.path.join(dirname, new_basename)
+                    new_basename = await _build_final_basename(message, name_no_ext, ts_str, ext)
+                    new_path = _resolve_conflict_path(os.path.join(dirname, new_basename))
                     if file_path != new_path:
                         shutil.move(file_path, new_path)
                         file_path = new_path
@@ -712,6 +758,7 @@ async def _download_worker():
                     log.info("下载完成: %s (%s bytes)", file_path, file_size)
                     break
                 except asyncio.CancelledError:
+                    _cleanup_temp_file(temp_path, download_id)
                     # 由看门狗因“进度无变化”取消，视为卡住
                     last_error = None
                     if attempt < DOWNLOAD_RETRIES:
@@ -725,6 +772,7 @@ async def _download_worker():
                         await _push_status(f"❌ 下载卡住（{DOWNLOAD_STALL_SECONDS}s 无进度）\n发送者: {sender_name}\n已重试 {DOWNLOAD_RETRIES + 1} 次")
                         log.error("下载卡住，已重试 %d 次", DOWNLOAD_RETRIES + 1)
                 except Exception as e:
+                    _cleanup_temp_file(temp_path, download_id)
                     last_error = e
                     if attempt < DOWNLOAD_RETRIES:
                         log.warning("下载失败第 %d 次，重试中: %s", attempt + 1, e)
@@ -802,9 +850,9 @@ async def handler(event):
     sender = await event.get_sender()
     name = getattr(sender, "username", None) or getattr(sender, "first_name", "未知")
 
-    # if _is_in_pending(event.chat_id, event.message.id):
-    #     log.info("已在队列中，跳过重复: chat_id=%s msg_id=%s", event.chat_id, event.message.id)
-    #     return
+    if _is_already_queued(event.chat_id, event.message.id):
+        log.info("已在队列或下载中，跳过重复: chat_id=%s msg_id=%s", event.chat_id, event.message.id)
+        return
     log.info("收到群 [%s] 里 %s 的视频，加入队列", TARGET_GROUP_NAME, name)
     await _enqueue(event.chat_id, event.message.id, name)
     await _push_status(f"📥 已加入下载队列：{name} 的视频（当前队列共 {_queue_size} 个）")
@@ -932,9 +980,3 @@ if __name__ == "__main__":
     with client:
         client.loop.run_until_complete(_start())
         client.run_until_disconnected()
-
-
-
-
-
-
