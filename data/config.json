@@ -4,6 +4,7 @@
   "tg_device_name": "tgdown",
   "tg_system_version": "",
   "tg_app_version": "",
+  "tg_message_prefix": "[tgdown]",
   "download_path": "./downloads",
   "web_port": 8765,
   "target_group_name": "tgdown",

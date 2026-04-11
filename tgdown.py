@@ -98,6 +98,15 @@ TG_DEVICE_MODEL = str(_config.get("tg_device_name") or _config.get("device_model
 # 可选：在会话里进一步区分系统/应用版本（留空则使用 Telethon 默认）
 TG_SYSTEM_VERSION = str(_config.get("tg_system_version") or "").strip() or None
 TG_APP_VERSION = str(_config.get("tg_app_version") or "").strip() or None
+# 发往目标群的消息前加标识行，便于与人工消息区分；留空则不加
+TG_MESSAGE_PREFIX = str(_config.get("tg_message_prefix", "[tgdown]")).strip()
+
+
+def _apply_outgoing_message_prefix(text: str) -> str:
+    """脚本发往群的消息统一加前缀（首行标识，与正文换行分隔）。"""
+    if not TG_MESSAGE_PREFIX:
+        return text
+    return f"{TG_MESSAGE_PREFIX}\n{text}"
 
 
 def _telegram_client_extra_kwargs() -> dict:
@@ -458,14 +467,15 @@ async def _send_to_target_group(text: str, *, kind: str = "status") -> tuple[boo
         log.warning("群消息发送失败 kind=%s: %s", kind, reason)
         return False, reason
     try:
-        sent = await client.send_message(_target_chat_id, text)
+        out = _apply_outgoing_message_prefix(text)
+        sent = await client.send_message(_target_chat_id, out)
         mid = getattr(sent, "id", None)
         log.info(
             "群消息发送成功 kind=%s chat_id=%s sent_msg_id=%s text_len=%d",
             kind,
             _target_chat_id,
             mid,
-            len(text or ""),
+            len(out or ""),
         )
         return True, None
     except Exception as e:

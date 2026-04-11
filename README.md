@@ -36,6 +36,7 @@
 | `tg_device_name` | 否 | `"tgdown"` | 登录后在 Telegram「设置 → 隐私与安全 → 活跃会话」中显示的设备名，便于区分多台机器；也支持旧键名 `device_model` |
 | `tg_system_version` | 否 | `""` | 可选，会话里显示的系统版本；留空则使用 Telethon 默认 |
 | `tg_app_version` | 否 | `""` | 可选，会话里显示的应用版本；留空则使用 Telethon 默认 |
+| `tg_message_prefix` | 否 | `"[tgdown]"` | 脚本自动发往群的消息会在**首行**加该标识（与正文换行分隔），便于与人工消息区分；设为 `""` 则不加 |
 | `target_group_name` | 否 | `"downapp"` | 监听的目标群名称，需与群标题一致 |
 | `download_path` | 否 | `"./downloads"` | 下载保存目录，相对路径基于 `data` 的父目录 |
 | `web_port` | 否 | `8765` | Web 面板端口 |
@@ -65,6 +66,7 @@
   "tg_device_name": "家里NAS-tgdown",
   "tg_system_version": "",
   "tg_app_version": "",
+  "tg_message_prefix": "[tgdown]",
   "download_path": "./downloads",
   "web_port": 8765,
   "web_bind": "0.0.0.0",
