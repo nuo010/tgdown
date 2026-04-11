@@ -100,7 +100,7 @@ docker run --rm -it \
   --name tgdown \
   --network host \
   -v "$(pwd)/data:/data" \
-  xxgl/tgdown:1.1
+  xxgl/tgdown:1.2
 ```
 ![init](/docs/images/init.png)
 ![yzm](/docs/images/yzm.png)
@@ -114,7 +114,7 @@ docker run -d \
   -v "$(pwd)/data:/data" \
   -v "$(pwd)/downloads:/downloads" \
   --restart=always \
-  xxgl/tgdown:1.1
+  xxgl/tgdown:1.2
 ```
 下载文件命名规则
 - 1、消息有文案且 AI 命名成功：`AI文件名_时间_ai.mp4`
