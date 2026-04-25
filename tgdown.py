@@ -223,15 +223,17 @@ def _download_id(chat_id: int, message_id: int) -> str:
     return f"{chat_id}_{message_id}"
 
 
-def _add_pending(chat_id: int, message_id: int, sender_name: str):
+def _add_pending(chat_id: int, message_id: int, sender_name: str, file_name: str = "", added_at: str | None = None, status: str = "waiting"):
     with _state_lock:
+        if any(p["chat_id"] == chat_id and p["message_id"] == message_id for p in _pending_list):
+            return
         _pending_list.append({
             "chat_id": chat_id,
             "message_id": message_id,
             "sender_name": sender_name,
-            "file_name": "",
-            "added_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-            "status": "waiting",
+            "file_name": file_name or "",
+            "added_at": added_at or datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "status": status,
         })
 
 
@@ -241,6 +243,7 @@ def _set_pending_status(chat_id: int, message_id: int, status: str):
             if p["chat_id"] == chat_id and p["message_id"] == message_id:
                 p["status"] = status
                 break
+    _update_task_status(chat_id, message_id, status)
 
 
 def _set_pending_file_name(chat_id: int, message_id: int, file_name: str):
@@ -249,12 +252,14 @@ def _set_pending_file_name(chat_id: int, message_id: int, file_name: str):
             if p["chat_id"] == chat_id and p["message_id"] == message_id:
                 p["file_name"] = file_name or ""
                 break
+    _update_task_file_name(chat_id, message_id, file_name)
 
 
 def _remove_pending(chat_id: int, message_id: int):
     with _state_lock:
         global _pending_list
         _pending_list = [p for p in _pending_list if not (p["chat_id"] == chat_id and p["message_id"] == message_id)]
+    _delete_task(chat_id, message_id)
 
 
 def _update_active(download_id: str, **kwargs):
@@ -276,7 +281,7 @@ def _add_history(record):
             _download_history.pop()
 
 
-# ---------- SQLite 成功记录 ----------
+# ---------- SQLite 成功记录 / 待下载任务 ----------
 _db_lock = threading.Lock()
 
 
@@ -299,8 +304,101 @@ def _init_db():
             conn.execute("ALTER TABLE download_record ADD COLUMN duration_sec INTEGER")
         except sqlite3.OperationalError:
             pass
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS download_task (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                chat_id INTEGER NOT NULL,
+                message_id INTEGER NOT NULL,
+                sender_name TEXT NOT NULL,
+                file_name TEXT DEFAULT '',
+                status TEXT NOT NULL DEFAULT 'waiting',
+                added_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                UNIQUE(chat_id, message_id)
+            )
+        """)
+        try:
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_download_task_status_id ON download_task(status, id)")
+        except sqlite3.OperationalError:
+            pass
         conn.commit()
         conn.close()
+
+
+def _save_task(chat_id: int, message_id: int, sender_name: str, status: str = "waiting"):
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    with _db_lock:
+        conn = sqlite3.connect(str(DB_PATH))
+        conn.execute(
+            """
+            INSERT INTO download_task (chat_id, message_id, sender_name, status, added_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?)
+            ON CONFLICT(chat_id, message_id) DO UPDATE SET
+                sender_name = excluded.sender_name,
+                status = excluded.status,
+                updated_at = excluded.updated_at
+            """,
+            (chat_id, message_id, sender_name or "未知", status, now, now),
+        )
+        conn.commit()
+        conn.close()
+
+
+def _update_task_status(chat_id: int, message_id: int, status: str):
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    with _db_lock:
+        conn = sqlite3.connect(str(DB_PATH))
+        conn.execute(
+            "UPDATE download_task SET status = ?, updated_at = ? WHERE chat_id = ? AND message_id = ?",
+            (status, now, chat_id, message_id),
+        )
+        conn.commit()
+        conn.close()
+
+
+def _update_task_file_name(chat_id: int, message_id: int, file_name: str):
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    with _db_lock:
+        conn = sqlite3.connect(str(DB_PATH))
+        conn.execute(
+            "UPDATE download_task SET file_name = ?, updated_at = ? WHERE chat_id = ? AND message_id = ?",
+            (file_name or "", now, chat_id, message_id),
+        )
+        conn.commit()
+        conn.close()
+
+
+def _delete_task(chat_id: int, message_id: int):
+    with _db_lock:
+        conn = sqlite3.connect(str(DB_PATH))
+        conn.execute(
+            "DELETE FROM download_task WHERE chat_id = ? AND message_id = ?",
+            (chat_id, message_id),
+        )
+        conn.commit()
+        conn.close()
+
+
+def _load_unfinished_tasks():
+    """恢复上次退出前未完成的任务；downloading 视为被中断，启动后重新排队。"""
+    with _db_lock:
+        conn = sqlite3.connect(str(DB_PATH))
+        conn.row_factory = sqlite3.Row
+        conn.execute(
+            "UPDATE download_task SET status = 'waiting', updated_at = ? WHERE status = 'downloading'",
+            (datetime.now().strftime("%Y-%m-%d %H:%M:%S"),),
+        )
+        rows = conn.execute(
+            """
+            SELECT chat_id, message_id, sender_name, file_name, added_at, status
+            FROM download_task
+            WHERE status = 'waiting'
+            ORDER BY id ASC
+            """
+        ).fetchall()
+        conn.commit()
+        conn.close()
+    return [dict(r) for r in rows]
 
 
 def _save_download_record(file_path: str, file_size: int, username: str, message_time: str, download_time: str, duration_sec: int = 0):
@@ -1049,12 +1147,47 @@ async def _download_worker():
             _download_queue.task_done()
 
 
-async def _enqueue(chat_id: int, message_id: int, sender_name: str):
+async def _enqueue(chat_id: int, message_id: int, sender_name: str, *, persist: bool = True, file_name: str = "", added_at: str | None = None) -> bool:
     global _queue_size
-    await _download_queue.put((chat_id, message_id, sender_name))
+    if _is_already_queued(chat_id, message_id):
+        log.info("任务已在队列或下载中，跳过重复入队: chat_id=%s msg_id=%s", chat_id, message_id)
+        return False
+    if persist:
+        _save_task(chat_id, message_id, sender_name, status="waiting")
+    _add_pending(chat_id, message_id, sender_name, file_name=file_name, added_at=added_at, status="waiting")
     with _state_lock:
         _queue_size += 1
-    _add_pending(chat_id, message_id, sender_name)
+    await _download_queue.put((chat_id, message_id, sender_name))
+    return True
+
+
+async def _restore_unfinished_tasks():
+    """把重启前未完成的任务恢复到内存队列。"""
+    if _download_queue is None:
+        return
+    tasks = _load_unfinished_tasks()
+    if not tasks:
+        log.info("未发现需要恢复的下载任务")
+        return
+    restored = 0
+    for task in tasks:
+        chat_id = int(task["chat_id"])
+        message_id = int(task["message_id"])
+        ok = await _enqueue(
+            chat_id,
+            message_id,
+            task.get("sender_name") or "未知",
+            persist=False,
+            file_name=task.get("file_name") or "",
+            added_at=task.get("added_at") or None,
+        )
+        if ok:
+            restored += 1
+    log.info("已恢复未完成下载任务: %d/%d", restored, len(tasks))
+    if restored:
+        if _target_chat_id is None:
+            await _ensure_target_chat()
+        await _push_status(f"♻️ 已恢复上次未完成的下载任务：{restored} 个")
 
 
 # ---------- Telegram 事件处理 ----------
@@ -1347,6 +1480,7 @@ if __name__ == "__main__":
         _download_queue = asyncio.Queue()
         for _ in range(CONCURRENT_DOWNLOADS):
             asyncio.create_task(_download_worker())
+        await _restore_unfinished_tasks()
         if CRON_SEND_CURRENT_TIME_ENABLED:
             asyncio.create_task(_cron_send_current_time_loop())
         if CRON_PUSH_DOWNLOAD_PROGRESS_ENABLED:
